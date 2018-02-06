@@ -8,7 +8,7 @@ using namespace std;
 using Ident = int;
 using Clause = vector<Ident>;
 using Formula = vector<Clause>;
-enum class DPLLFlag : bool { Guessed=false, Derived=true };
+// enum class DPLLFlag : bool { Guessed=false, Derived=true };
 using DerivedLit = pair<Ident,bool>;
 using Model = vector<DerivedLit>;
 
@@ -21,13 +21,9 @@ void print_formula(Formula f, FILE* file=stdout) {
 	fprintf(file, "(\n");
 	for (auto i: f) {
 		for (auto j: i) {
-			// #ifdef TRACING
 			fprintf(file, "%d,", j);
-			// #endif
 		}
-		// #ifdef TRACING
 		fprintf(file, ";\n");
-		// #endif
 	}	
 	fprintf(file, ")\n");
 }
@@ -35,27 +31,37 @@ void print_formula(Formula f, FILE* file=stdout) {
 
 enum class HaltFlag { ok, empty_clause, empty_formula };
 
-// DerivedLit negate(DerivedLit x) {
-// 	return make_pair(-x.first, )
-// }
+DerivedLit negate(DerivedLit x) {
+	return make_pair(-x.first, !x.second);
+}
 
-// 0 OK, 1 empty clause, 2 empty formula
+// Auxiliary function
+// bool exists
+
 tuple<HaltFlag,Model,vector<char>> unit_propagation(Formula f, Model m, vector<char> undefs) {
 	// Preprocess
 	#ifdef TRACING
 	fprintf(stderr, "  Prep: "); for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
 	#endif
+	auto ptr = f.end();
 	for (auto& i: m) {	
 		const auto& u = i.first;
-		const auto  u_ = -1*u;
-		f.erase(remove_if(f.begin(), f.end(), [u](auto x){return find(x.begin(), x.end(), u) != x.end();}), f.end());
-		for (auto& i: f) {
-			i.erase(remove(i.begin(), i.end(), u_), i.end());
+		const auto u_ = -1*u;
+		ptr = remove_if(f.begin(), ptr, [u](auto x){return find(x.begin(), x.end(), u) != x.end();});
+	}
+	f.erase(ptr, f.end());
+	for (auto& i: m) {	
+		const auto& u = i.first;
+		const auto u_ = -1*u;
+		for (auto& j: f) {
+			j.erase(remove(j.begin(), j.end(), u_), j.end());
 		}
 	}
+
 	#ifdef TRACING
 	print_formula(f ,stderr);
 	#endif
+
 	// Check if formula empty, if yes abort unit propagation
 	if (f.empty()) {
 		return make_tuple(HaltFlag::empty_formula, m, undefs);
@@ -157,7 +163,7 @@ pair<Formula,int> pureLitElim(Formula f, int nvars) {
 	return make_pair(f, nvars);
 }
 
-bool dpll(Formula f, Model m, int nvars) {
+bool dpll(Formula f, int nvars) {
 	// Remove duplicate terms in clauses and duplicate clauses
 	for (auto& i: f) {
 		sort(i.begin(), i.end());
@@ -169,6 +175,11 @@ bool dpll(Formula f, Model m, int nvars) {
 	// Pure literal elimination
 	tie(f, nvars) = pureLitElim(f, nvars);
 
+	// Check: if -n and n in any clause, remove them
+	// TODO
+
+	Model m(0);
+	m.reserve(f.size());
 	// vector<bool> undefs(nvars);
 	vector<char> undefs(nvars);
 	fill(undefs.begin(), undefs.end(), true);
@@ -191,7 +202,7 @@ bool dpll(Formula f, Model m, int nvars) {
 			#endif
 
 			// Backtrack
-			tie(m,undefs) = backtrack(m,undefs);
+			tie(m,undefs) = backtrack(m, undefs);
 			// If impossible to backtrack anymore, conclude unsatisfiable
 			if (m.empty()) {
 				return false;
@@ -219,7 +230,7 @@ bool dpll(Formula f, Model m, int nvars) {
 				fprintf(stderr, "  Attempting backjump to %d%s (\n", y.first, y.second ? "" : "d");
 				#endif
 				m_.push_back(x);
-				tie(flag, ignore, ignore) = unit_propagation(f, m_, undefs);
+				tie(flag, ignore, ignore) = unit_propagation(f, m_, undefs_);
 				// If not then we can't backjump anymore
 				if (flag != HaltFlag::empty_clause) {
 					#ifdef TRACING
@@ -270,16 +281,10 @@ bool dpll(Formula f, Model m, int nvars) {
 				return true;
 			}
 			// Else case-split
-			/*auto ptr = undefs.end();
-			for (auto& i: m) {
-				ptr = remove(undefs.begin(), ptr, abs(i.first));
-			}
-			undefs.erase(ptr, undefs.end());*/
 			Ident choice;
 			int freq = 0;
-			// for (auto i: undefs) {
 			for (Ident i=-nvars; i<=nvars; i++) {
-				if (i==0 || undefs[abs(i)-1]==false) continue;
+				if (i == 0 || undefs[abs(i)-1] == false) continue;
 				// Count occurences
 				int fr = count_if(f.begin(), f.end(), [i](Clause x){return find(x.begin(), x.end(), i) != x.end();});
 				#ifdef TRACING
@@ -312,16 +317,14 @@ int main(int argc, char const *argv[])
 			f[i].push_back(n);
 		}
 	}
-	Model m(0);
-	m.reserve(nclauses);
 
 	#ifdef TRACING
 	print_formula(f, stderr);
 	#endif
 
-	bool result = dpll(f, m, nvars);
+	bool result = dpll(f, nvars);
 
-	printf("%s", result ? "SATISFIABLE\n" : "UNSATISFIABLE\n");
+	printf(result ? "SATISFIABLE\n" : "UNSATISFIABLE\n");
 
 	return 0;
 }
