@@ -40,10 +40,10 @@ enum class HaltFlag { ok, empty_clause, empty_formula };
 // }
 
 // 0 OK, 1 empty clause, 2 empty formula
-pair<HaltFlag,Model> unit_propagation(Formula f, Model m) {
+tuple<HaltFlag,Model,vector<char>> unit_propagation(Formula f, Model m, vector<char> undefs) {
 	// Preprocess
 	#ifdef TRACING
-	fprintf(stderr, "  Prep: "); for (auto& i: m) fprintf(stderr, "%d/%d ", i.first, i.second); fprintf(stderr, "\n");
+	fprintf(stderr, "  Prep: "); for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
 	#endif
 	for (auto& i: m) {	
 		const auto& u = i.first;
@@ -58,22 +58,22 @@ pair<HaltFlag,Model> unit_propagation(Formula f, Model m) {
 	#endif
 	// Check if formula empty, if yes abort unit propagation
 	if (f.empty()) {
-		return make_pair(HaltFlag::empty_formula, m);
+		return make_tuple(HaltFlag::empty_formula, m, undefs);
 	}
 	// Check if empty clauses, if yes abort unit propagation
 	if (find_if(f.begin(), f.end(), [](auto x){return x.empty();}) != f.end()) {
-		return make_pair(HaltFlag::empty_clause, m);
+		return make_tuple(HaltFlag::empty_clause, m, undefs);
 	}
 
 	// Propagate
 	while (true) {
 		#ifdef TRACING
-		fprintf(stderr, "  Prop: "); for (auto& i: m) fprintf(stderr, "%d/%d ", i.first, i.second); fprintf(stderr, "\n");
+		fprintf(stderr, "  Prop: "); for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
 		#endif
 
 		const auto& unit = find_if(f.begin(), f.end(), [](auto x){return x.size() == 1;});  // Hot-spot
 		if (unit == f.end()) {
-			return make_pair(HaltFlag::ok, m);
+			return make_tuple(HaltFlag::ok, m, undefs);
 		} else {
 			const auto u = (*unit)[0];
 			const auto u_ = -1*u;
@@ -92,52 +92,47 @@ pair<HaltFlag,Model> unit_propagation(Formula f, Model m) {
 
 			// Update model
 			m.push_back(make_pair(u, true));
+			undefs[abs(u)-1] = false;
 
 			// Check if formula empty, if yes abort unit propagation
 			if (f.empty()) {
-				return make_pair(HaltFlag::empty_formula, m);
+				return make_tuple(HaltFlag::empty_formula, m, undefs);
 			}
 			// Check if empty clauses, if yes abort unit propagation
 			if (find_if(f.begin(), f.end(), [](auto x){return x.empty();}) != f.end()) {
-				return make_pair(HaltFlag::empty_clause, m);
+				return make_tuple(HaltFlag::empty_clause, m, undefs);
 			}
 		}
 	}
 }
 
-Model backtrack(Model m) {
+pair<Model,vector<char>> backtrack(Model m, vector<char> undefs) {
 	#ifdef TRACING
-	fprintf(stderr, "  Backtracking, before: "); for (auto& i: m) fprintf(stderr, "%d/%d ", i.first, i.second); fprintf(stderr, "\n");
+	fprintf(stderr, "  Backtracking, before: "); for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
 	#endif
 	while (!m.empty()) {
 		auto x = m.back();
 		if (x.second == false) {
 			#ifdef TRACING
-			fprintf(stderr, "  Backtracked, now: "); for (auto& i: m) fprintf(stderr, "%d/%d ", i.first, i.second); fprintf(stderr, "\n");
+			fprintf(stderr, "  Backtracked, now: "); for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
 			#endif
-			return m;
+			return make_pair(m, undefs);
 		}
 		#ifdef TRACING
-		fprintf(stderr, "  Popped %d/%d\n", x.first, x.second);
+		fprintf(stderr, "  Popped %d%s\n", x.first, x.second ? "" : "d");
 		#endif
 		m.pop_back();
+		undefs[abs(x.first)-1] = true;
 	}
 	#ifdef TRACING
 	fprintf(stderr, "  Empty\n");
 	#endif
-	return m;
-}
-
-Model backjump(Model m) {
-	while (!m.empty()) {
-		m = backtrack(m);
-	}
-	return m;
+	return make_pair(m, undefs);
 }
 
 pair<Formula,int> pureLitElim(Formula f, int nvars) {
 	vector<Ident> pures;
-	for (int i=1; i<=nvars; i++) {
+	for (Ident i=1; i<=nvars; i++) {
 		if ((find_if(f.begin(), f.end(), [i](Clause x){return find(x.begin(), x.end(),  i) != x.end();}) != f.end())
 		 != (find_if(f.begin(), f.end(), [i](Clause x){return find(x.begin(), x.end(), -i) != x.end();}) != f.end())) {
 			#ifdef TRACING
@@ -174,15 +169,21 @@ bool dpll(Formula f, Model m, int nvars) {
 	// Pure literal elimination
 	tie(f, nvars) = pureLitElim(f, nvars);
 
+	// vector<bool> undefs(nvars);
+	vector<char> undefs(nvars);
+	fill(undefs.begin(), undefs.end(), true);
+
 	// While empty clauses
 	while (true) {
 		#ifdef TRACING
-		for (auto& i: m) fprintf(stderr, "%d/%d ", i.first, i.second); fprintf(stderr, "\n");
+		for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
+		for (Ident i=1; i<=nvars; i++) fprintf(stderr, "%d:%d ", i, undefs[i-1]); fprintf(stderr, "\n");
 		#endif
 
 		// Eagerly apply unit propagation
 		HaltFlag flag;
-		tie(flag, m) = unit_propagation(f, m);
+		tie(flag, m, undefs) = unit_propagation(f, m, undefs);
+
 		// If there is an empty clause
 		if (flag == HaltFlag::empty_clause) {
 			#ifdef TRACING
@@ -190,7 +191,7 @@ bool dpll(Formula f, Model m, int nvars) {
 			#endif
 
 			// Backtrack
-			m = backtrack(m);
+			tie(m,undefs) = backtrack(m,undefs);
 			// If impossible to backtrack anymore, conclude unsatisfiable
 			if (m.empty()) {
 				return false;
@@ -199,19 +200,14 @@ bool dpll(Formula f, Model m, int nvars) {
 			auto x = m.back();
 			m.pop_back();
 			#ifdef TRACING
-			fprintf(stderr, "  Found decision literal %d/%d\n", x.first, x.second);
+			fprintf(stderr, "  Found decision literal %d%s\n", x.first, x.second ? "" : "d");
 			#endif
-
-			/*x.first *= -1;
-			x.second = true;
-			#ifdef TRACING
-			fprintf(stderr, "  Pushed %d/%d\n", x.first, x.second);
-			#endif
-			m.push_back(x);*/
 
 			// Backjumping
 			while (true) {
-				Model m_ = backtrack(m);
+				Model m_ ;
+				vector<char> undefs_;
+				tie(m_, undefs_) = backtrack(m, undefs);
 				// No more backtracking possible
 				if (m_.empty()) {
 					break;
@@ -220,10 +216,10 @@ bool dpll(Formula f, Model m, int nvars) {
 				auto y = m_.back();
 				m_.pop_back();
 				#ifdef TRACING
-				fprintf(stderr, "  Attempting backjump to %d/%d (\n", y.first, y.second);
+				fprintf(stderr, "  Attempting backjump to %d%s (\n", y.first, y.second ? "" : "d");
 				#endif
 				m_.push_back(x);
-				tie(flag, ignore) = unit_propagation(f, m_);
+				tie(flag, ignore, ignore) = unit_propagation(f, m_, undefs);
 				// If not then we can't backjump anymore
 				if (flag != HaltFlag::empty_clause) {
 					#ifdef TRACING
@@ -233,13 +229,15 @@ bool dpll(Formula f, Model m, int nvars) {
 					// m.push_back(y);
 					break;
 				} 
-				// If yes then we can assert this backjump was successful, update the model, and try further
+				// If yes then this backjump was successful: update the model and try backjumping again
 				else {
 					#ifdef TRACING
 					fprintf(stderr, "  ) Conflict.\n");
 					#endif
 					m_.pop_back();
 					m = m_;
+					undefs = undefs_;
+					undefs[abs(y.first)-1] = true;
 				}
 			}
 
@@ -258,7 +256,7 @@ bool dpll(Formula f, Model m, int nvars) {
 			x.first *= -1;
 			x.second = true;
 			#ifdef TRACING
-			fprintf(stderr, "  Pushed %d/%d\n", x.first, x.second);
+			fprintf(stderr, "  Pushed %d%s\n", x.first, x.second ? "" : "d");
 			fprintf(stderr, "  Conflict: "); for (auto i: conflict) fprintf(stderr, "%d ", i); fprintf(stderr, "\n");
 			#endif
 			f.push_back(conflict);
@@ -272,22 +270,34 @@ bool dpll(Formula f, Model m, int nvars) {
 				return true;
 			}
 			// Else case-split
-			for (Ident i=1; i<=nvars; i++) {
-				// Naive choice
-				if (find_if(m.begin(), m.end(), [i](auto x){return x.first == i || x.first == -i;}) == m.end()) {
-					#ifdef TRACING
-					fprintf(stderr, "  Adding %d\n", i);
-					#endif
-					m.push_back(make_pair(i, false));
-					break;
+			/*auto ptr = undefs.end();
+			for (auto& i: m) {
+				ptr = remove(undefs.begin(), ptr, abs(i.first));
+			}
+			undefs.erase(ptr, undefs.end());*/
+			Ident choice;
+			int freq = 0;
+			// for (auto i: undefs) {
+			for (Ident i=-nvars; i<=nvars; i++) {
+				if (i==0 || undefs[abs(i)-1]==false) continue;
+				// Count occurences
+				int fr = count_if(f.begin(), f.end(), [i](Clause x){return find(x.begin(), x.end(), i) != x.end();});
+				#ifdef TRACING
+				fprintf(stderr, "  num %d freq %d\n", i, fr);
+				#endif
+				if (fr > freq) {
+					choice = i;
+					freq = fr;
 				}
 			}
+			m.push_back(make_pair(choice, false));
+			undefs[abs(choice)-1] = false;
 		}
 	}
 }
 
-// Assumes comments are stripped out, for simplicity. Auxiliary script feeds input after `grep -v '^c'`
-Formula read_formula(FILE*=stdin) {
+int main(int argc, char const *argv[])
+{
 	int nvars, nclauses;
 	scanf("%*s %*s %d %d", &nvars, &nclauses);
 	#ifdef TRACING
@@ -302,13 +312,7 @@ Formula read_formula(FILE*=stdin) {
 			f[i].push_back(n);
 		}
 	}
-	return f;	
-}
-
-int main(int argc, char const *argv[])
-{
-	f = read_formula();
-	Model m();
+	Model m(0);
 	m.reserve(nclauses);
 
 	#ifdef TRACING
