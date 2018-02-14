@@ -134,25 +134,13 @@ vector<size_t> sorted_vector_indices(const vector<T>& v) {
 
 template<bool update_model>
 HaltFlag unit_propagation(const Formula& f, Model& m, WatchList& watch, const Ident lit) {
-	#ifdef TRACING
-	fprintf(stderr, "  Propagating %d\n", lit);
-	// fprintf(stderr, "  Watched literals:\n"); for (int i=0; i<watch._clause2lit.size(); i++) fprintf(stderr, "    %d: %d %d\n", i, watch._clause2lit[i][0], watch._clause2lit[i][1]);
-	#endif
-
 	auto& clauses = watch.lit2clause(-lit);
 	for (int i=0; i<clauses.size(); i++) {
 		auto& c = clauses[i];
-		#ifdef TRACING
-		fprintf(stderr, "  Clause #%d (%d)\n", i, c);
-		#endif
 		Ident& one = watch.clause2lit(c)[0];
 		Ident& two = watch.clause2lit(c)[1];
 		Ident& these = one==-lit ? one : two;
 		Ident& other = one==-lit ? two : one;
-
-		#ifdef TRACING
-		fprintf(stderr, "  This: %d:%d Other: %d:%d\n", these, static_cast<int>(watch.get_assignment(these)), other, static_cast<int>(watch.get_assignment(other)));
-		#endif
 
 		// If the other is true, do nothing
 		if (watch.get_assignment(other) == Assignment::True) {
@@ -167,24 +155,15 @@ HaltFlag unit_propagation(const Formula& f, Model& m, WatchList& watch, const Id
 				) {
 			const Ident lit_ = *ptr_lit_;
 
-			#ifdef TRACING
-			fprintf(stderr, "  Deleting and putting on %d\n", lit_);
-			#endif
 			// Remove c from the watchlist of -lit and put it onto the watchlist of lit_
 			watch.lit2clause(lit_).push_back(c);
 			clauses.erase(clauses.begin()+i);
 			i--;
 			// Put lit_ instead of -lit on the watchlist of c
 			these = lit_;
-			#ifdef TRACING
-			// fprintf(stderr, "  Now watched: "); for (int i=-watch.nvars; i<=watch.nvars; i++) {if (i==0) continue; fprintf(stderr, "%d: ", i); for (auto j: watch.lit2clause(i)) fprintf(stderr, "%d ", j); fprintf(stderr, "\b, ");} fprintf(stderr, "\n");
-			#endif			
 		}
 		// Else (if there are no more nonfalse literals in the clause), if the other watched literal is unset then it is a unit clause: propagate
 		else if (watch.get_assignment(other) == Assignment::Unset) {
-			#ifdef TRACING
-			fprintf(stderr, "  Entering..\n");
-			#endif			
 			if constexpr (update_model) {
 				m.push(make_pair(other, true));
 			}
@@ -192,50 +171,26 @@ HaltFlag unit_propagation(const Formula& f, Model& m, WatchList& watch, const Id
 			const HaltFlag flag = unit_propagation<update_model>(f, m, watch, other);
 			// If a conflict is found immediately end unit propagation and process conflict
 			if (flag != HaltFlag::ok) {
-				#ifdef TRACING
-				fprintf(stderr, "  Exiting [sub-conflict]..\n");
-				#endif			
 				return flag;
 			}
 		} 
 		// Else (if there are no more nonfalse literals in the clause and the other watched literal is set) then we have found a conflict
 		else {
-			#ifdef TRACING
-			fprintf(stderr, "  Exiting [conflict]..\n");
-			#endif			
 			return HaltFlag::empty_clause;
 		}
-		#ifdef TRACING
-		// fprintf(stderr, "  New watched literals:\n"); for (int i=0; i<watch._clause2lit.size(); i++) fprintf(stderr, "    %d: %d %d\n", i, watch._clause2lit[i][0], watch._clause2lit[i][1]);
-		#endif
 	}
-	#ifdef TRACING
-	fprintf(stderr, "  Exiting [ok]..\n");
-	#endif			
 	return HaltFlag::ok;
 }
 
 void backtrack(Model& m, WatchList& watch) {
-	#ifdef TRACING
-	fprintf(stderr, "  Backtracking, before: "); for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
-	#endif
 	while (!m.empty()) {
 		const auto& x = m.back();
 		if (x.second == false) {
-			#ifdef TRACING
-			fprintf(stderr, "  Backtracked, now: "); for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
-			#endif
 			return;
 		}
-		#ifdef TRACING
-		fprintf(stderr, "  Popped %d%s\n", x.first, x.second ? "" : "d");
-		#endif
 		m.pop();
 		watch.assignments(x.first) = Assignment::Unset;
 	}
-	#ifdef TRACING
-	fprintf(stderr, "  Empty\n");
-	#endif
 	return;
 }
 
@@ -244,9 +199,6 @@ Formula pure_lit_elim(Formula f, int nvars) {
 	for (Ident i=1; i<=nvars; i++) {
 		if ((exists_if(f.begin(), f.end(), [i](Clause x){return exists(x.begin(), x.end(),  i);}))
 		 != (exists_if(f.begin(), f.end(), [i](Clause x){return exists(x.begin(), x.end(), -i);}))) {
-			#ifdef TRACING
-			fprintf(stderr, "Pure lit: %d\n", i);
-			#endif
 			pures.push_back(i);
 		}
 	}
@@ -264,9 +216,6 @@ Formula tautology_removal(Formula f, int nvars) {
 		auto& c = f[i];
 		for (int n=1; n<=nvars; n++) {
 			if (exists(c.begin(), c.end(), n) && exists(c.begin(), c.end(), -n)) {
-				#ifdef TRACING
-				fprintf(stderr, "Erasing clause %d\n", i);
-				#endif
 				f.erase(f.begin() + i);
 				i--;
 				break;
@@ -288,20 +237,10 @@ bool dpll(Formula f, int nvars) {
 	// Pure literal elimination
 	f = pure_lit_elim(f, nvars);
 
-	#ifdef TRACING
-	fprintf(stderr, "After pure_lit_elim:\n");
-	print_formula(f, stderr);
-	#endif
-
 	// Check: if -n and n in any clause, remove the clause
 	f = tautology_removal(f, nvars);
 
 	Model m(f);
-
-	#ifdef TRACING
-	fprintf(stderr, "After tautology removal:\n")
-	print_formula(f, stderr);
-	#endif
 
 	// Add missing variables (removed by the procedures above) to trail as deduced
 	{
@@ -313,9 +252,6 @@ bool dpll(Formula f, int nvars) {
 		}
 		for (int i=0; i<nvars; i++) {
 			if (!missing[i]) {
-				#ifdef TRACING
-				fprintf(stderr, "Missing %d\n", i+1);
-				#endif
 				m.push(make_pair(i+1, true));
 			}
 		}
@@ -326,27 +262,16 @@ bool dpll(Formula f, int nvars) {
 
 	// Make 0-level unit propagation
 	while (true) {
-		#ifdef TRACING
-		fprintf(stderr, "  Prop: "); for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
-		#endif
-
 		const auto& unit = find_if(f.begin(), f.end(), [](auto x){return x.size() == 1;});
 		if (unit == f.end()) {
 			break;
 		} else {
 			const auto u = (*unit)[0];
 			const auto u_ = -1*u;
-			#ifdef TRACING
-			fprintf(stderr, "  Found unit %d\n", u);
-			#endif
 			f.erase(remove_if(f.begin(), f.end(), [u](auto x){return exists(x.begin(), x.end(), u);}), f.end());
 			// transform(f.begin(), f.end(), f.begin(), [u_](auto x){return remove()})
 			for (auto& i: f)
 				i.erase(remove(i.begin(), i.end(), u_), i.end());
-
-			#ifdef TRACING
-			print_formula(f ,stderr);
-			#endif
 
 			// Update model
 			m.push(make_pair(u, true));
@@ -363,11 +288,6 @@ bool dpll(Formula f, int nvars) {
 		}
 	}
 
-	#ifdef TRACING
-	fprintf(stderr, "After initial propagation:\n")
-	print_formula(f, stderr);
-	#endif
-
 	// Make first decision
 	// Simple heuristic for decisions: choose variable that appears the most often
 	vector<int> freqs(nvars, 0);
@@ -376,13 +296,7 @@ bool dpll(Formula f, int nvars) {
 			freqs[abs(j)-1]++;
 		}
 	}
-	#ifdef TRACING
-	fprintf(stderr, "  Freqs: "); for (int i=0; i<nvars; i++) fprintf(stderr, "%d:%d ", i+1, freqs[i]); fprintf(stderr, "\n");
-	#endif
 	vector<size_t> ifreqs = sorted_vector_indices(freqs);
-	#ifdef TRACING
-	fprintf(stderr, "  iFreqs: "); for (int i=0; i<nvars; i++) fprintf(stderr, "%d ", ifreqs[i]); fprintf(stderr, "\n");
-	#endif
 
 	const Ident choice = ifreqs.front() + 1;
 	m.push(make_pair(choice, false));
@@ -390,15 +304,6 @@ bool dpll(Formula f, int nvars) {
 
 	// Main loop
 	while (true) {
-		#ifdef TRACING
-		for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
-		// for (Ident i=1; i<=nvars; i++) fprintf(stderr, "%d:%d ", i, undefs[i-1]); fprintf(stderr, "\n");
-		#endif
-		#ifdef TRACING
-		fprintf(stderr, "  Watched: "); for (int i=-nvars; i<=nvars; i++) {if (i==0) continue; fprintf(stderr, "%d: ", i); for (auto j: watch.lit2clause(i)) fprintf(stderr, "%d ", j); fprintf(stderr, "\b, ");} fprintf(stderr, "\n");
-		fprintf(stderr, "  Assignments: "); for (int i=1; i<=nvars; i++) fprintf(stderr, "%d:%d ", i, static_cast<int>(watch.assignments(i))); fprintf(stderr, "\n");
-		#endif
-
 		// Eagerly apply unit propagation
 		HaltFlag flag = unit_propagation<true>(f, m, watch, m.back().first);
 
@@ -410,10 +315,6 @@ bool dpll(Formula f, int nvars) {
 
 		// If there is an empty clause
 		else if (flag == HaltFlag::empty_clause) {
-			#ifdef TRACING
-			fprintf(stderr, "  Found empty clause\n");
-			#endif
-
 			// Backtrack
 			backtrack(m, watch);
 			// If impossible to backtrack anymore, conclude unsatisfiable
@@ -423,9 +324,6 @@ bool dpll(Formula f, int nvars) {
 			// Otherwise store latest decision, and attempt to backjump
 			auto x = m.back();
 			m.pop();
-			#ifdef TRACING
-			fprintf(stderr, "  Found decision literal %d%s\n", x.first, x.second ? "" : "d");
-			#endif
 
 			// Backjumping
 			while (true) {
@@ -444,21 +342,12 @@ bool dpll(Formula f, int nvars) {
 				auto y = m.back();
 				m.back() = x;
 				watch.assignments(y.first) = Assignment::Unset;
-				#ifdef TRACING
-				fprintf(stderr, "  Attempting backjump to %d%s (\n", y.first, y.second ? "" : "d");
-				#endif
 				// watch.set_assignment(x.first);
-				#ifdef TRACING
-				fprintf(stderr, "  Now trail looks like: "); for (auto& i: m) fprintf(stderr, "%d%s ", i.first, i.second ? "" : "d"); fprintf(stderr, "\n");
-				#endif
 				auto assignments_save_ = watch._assignments;
 				flag = unit_propagation<false>(f, m, watch, m.back().first);
 				watch._assignments = assignments_save_;
 				// If not then we can't backjump anymore
 				if (flag != HaltFlag::empty_clause) {
-					#ifdef TRACING
-					fprintf(stderr, "  ) No conflict.\n");
-					#endif
 					// Restore
 					m.back() = y;
 					m.head = model_head_save;
@@ -466,11 +355,8 @@ bool dpll(Formula f, int nvars) {
 					// m.push(x);
 					break;
 				} 
-				// If yes then this backjump was successful: update the model and try backjumping again
+				// If yes then this backjump was successful: try backjumping again
 				else {
-					#ifdef TRACING
-					fprintf(stderr, "  ) Conflict.\n");
-					#endif
 					m.pop();
 				}
 			}
@@ -496,23 +382,13 @@ bool dpll(Formula f, int nvars) {
 			// Append the conflict clause and push the last decision literal
 			x.first *= -1;
 			x.second = true;
-			#ifdef TRACING
-			fprintf(stderr, "  Pushed %d%s\n", x.first, x.second ? "" : "d");
-			fprintf(stderr, "  Conflict: "); for (auto i: conflict) fprintf(stderr, "%d ", i); fprintf(stderr, "\n");
-			#endif
 			m.push(x);
 			watch.set_assignment(x.first);
 		}
 
 		// If not, then we have to make a decision
 		else {
-			#ifdef TRACING
-			fprintf(stderr, "  Case split\n");
-			#endif
 			for (auto i: ifreqs) {
-				#ifdef TRACING
-				// fprintf(stderr, )
-				#endif
 				if (watch._assignments[i] == Assignment::Unset) {
 					const Ident choice = i+1;
 					m.push(make_pair(choice, false));
@@ -527,9 +403,6 @@ bool dpll(Formula f, int nvars) {
 pair<Formula,int> read_formula(FILE* file=stdin) {
 	int nvars, nclauses;
 	fscanf(file, "%*s %*s %d %d", &nvars, &nclauses);
-	#ifdef TRACING
-	fprintf(stderr, "%d %d\n", nvars, nclauses);
-	#endif
 	Formula f(nclauses);
 	for (int i=0; i<nclauses; i++) {
 		while (true) {
@@ -545,10 +418,6 @@ pair<Formula,int> read_formula(FILE* file=stdin) {
 int main(int argc, char const *argv[])
 {
 	const auto [f, nvars] = read_formula();
-
-	#ifdef TRACING
-	print_formula(f, stderr);
-	#endif
 
 	bool result = dpll(f, nvars);
 
