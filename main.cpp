@@ -239,7 +239,7 @@ void backtrack(Model& m, WatchList& watch) {
 	return;
 }
 
-Formula pureLitElim(Formula f, int nvars) {
+Formula pure_lit_elim(Formula f, int nvars) {
 	vector<Ident> pures;
 	for (Ident i=1; i<=nvars; i++) {
 		if ((exists_if(f.begin(), f.end(), [i](Clause x){return exists(x.begin(), x.end(),  i);}))
@@ -259,6 +259,23 @@ Formula pureLitElim(Formula f, int nvars) {
 	return f;
 }
 
+Formula tautology_removal(Formula f, int nvars) {
+	for (int i=0; i<f.size(); i++) {
+		auto& c = f[i];
+		for (int n=1; n<=nvars; n++) {
+			if (exists(c.begin(), c.end(), n) && exists(c.begin(), c.end(), -n)) {
+				#ifdef TRACING
+				fprintf(stderr, "Erasing clause %d\n", i);
+				#endif
+				f.erase(f.begin() + i);
+				i--;
+				break;
+			}
+		}
+	}
+	return f;
+}
+
 bool dpll(Formula f, int nvars) {	
 	// Remove duplicate terms in clauses and duplicate clauses
 	for (auto& i: f) {
@@ -269,29 +286,22 @@ bool dpll(Formula f, int nvars) {
 	f.erase(unique(f.begin(), f.end()), f.end());
 
 	// Pure literal elimination
-	f = pureLitElim(f, nvars);
+	f = pure_lit_elim(f, nvars);
 
 	#ifdef TRACING
-	fprintf(stderr, "After pureLitElim:\n");
+	fprintf(stderr, "After pure_lit_elim:\n");
 	print_formula(f, stderr);
 	#endif
 
 	// Check: if -n and n in any clause, remove the clause
-	for (int i=0; i<f.size(); i++) {
-		auto& c = f[i];
-		for (int n=1; n<=nvars; n++) {
-			if (exists(c.begin(), c.end(), n) && exists(c.begin(), c.end(), -n)) {
-				#ifdef TRACING
-				fprintf(stderr, "Erasing clause %d\n", i);
-				#endif
-				f.erase(f.begin()+i);
-				i--;
-				break;
-			}
-		}
-	}
+	f = tautology_removal(f, nvars);
 
 	Model m(f);
+
+	#ifdef TRACING
+	fprintf(stderr, "After tautology removal:\n")
+	print_formula(f, stderr);
+	#endif
 
 	// Add missing variables (removed by the procedures above) to trail as deduced
 	{
@@ -310,11 +320,6 @@ bool dpll(Formula f, int nvars) {
 			}
 		}
 	}
-
-	#ifdef TRACING
-	fprintf(stderr, "After tautology removal:\n")
-	print_formula(f, stderr);
-	#endif
 
 	// Watched literals
 	WatchList watch(nvars, f);
@@ -364,6 +369,7 @@ bool dpll(Formula f, int nvars) {
 	#endif
 
 	// Make first decision
+	// Simple heuristic for decisions: choose variable that appears the most often
 	vector<int> freqs(nvars, 0);
 	for (auto& i: f) {
 		for (auto& j: i) {
@@ -394,8 +400,7 @@ bool dpll(Formula f, int nvars) {
 		#endif
 
 		// Eagerly apply unit propagation
-		HaltFlag flag;
-		flag = unit_propagation<true>(f, m, watch, m.back().first);
+		HaltFlag flag = unit_propagation<true>(f, m, watch, m.back().first);
 
 		// If all variables assigned, then we have a model: formula is satisfiable
 		if (flag == HaltFlag::ok && m.size() == nvars) {
@@ -519,10 +524,9 @@ bool dpll(Formula f, int nvars) {
 	}
 }
 
-int main(int argc, char const *argv[])
-{
+pair<Formula,int> read_formula(FILE* file=stdin) {
 	int nvars, nclauses;
-	scanf("%*s %*s %d %d", &nvars, &nclauses);
+	fscanf(file, "%*s %*s %d %d", &nvars, &nclauses);
 	#ifdef TRACING
 	fprintf(stderr, "%d %d\n", nvars, nclauses);
 	#endif
@@ -530,11 +534,17 @@ int main(int argc, char const *argv[])
 	for (int i=0; i<nclauses; i++) {
 		while (true) {
 			int n;
-			scanf("%d", &n);
+			fscanf(file, "%d", &n);
 			if (n == 0) break;
 			f[i].push_back(n);
 		}
 	}
+	return make_pair(f, nvars);
+}
+
+int main(int argc, char const *argv[])
+{
+	const auto [f, nvars] = read_formula();
 
 	#ifdef TRACING
 	print_formula(f, stderr);

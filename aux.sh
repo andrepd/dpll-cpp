@@ -1,2 +1,4 @@
 #! /bin/bash
-grep -v "^c" $1 | ~/Development/dpll-cpp/a.out
+path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+cd "$path"
+grep -v "^c" $1 | a.out
